@@ -50,11 +50,16 @@ import static java.util.Objects.requireNonNull;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.function.Function;
 
 import javax.annotation.Nullable;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+
+import com.linecorp.armeria.common.HttpRequest;
+import com.linecorp.armeria.common.HttpResponse;
+import com.linecorp.armeria.server.Service;
 
 import io.grpc.ServerMethodDefinition;
 import io.grpc.ServerServiceDefinition;
@@ -66,16 +71,31 @@ import io.grpc.ServerServiceDefinition;
 final class HandlerRegistry {
     private final List<ServerServiceDefinition> services;
     private final ImmutableMap<String, ServerMethodDefinition<?, ?>> methods;
+    private final ImmutableMap<String,
+        Function<Service<HttpRequest, HttpResponse>, Service<HttpRequest, HttpResponse>>>
+        serviceDecoratorFunctions;
 
     private HandlerRegistry(List<ServerServiceDefinition> services,
-                            ImmutableMap<String, ServerMethodDefinition<?, ?>> methods) {
+                            ImmutableMap<String, ServerMethodDefinition<?, ?>> methods,
+                            ImmutableMap<String,
+                                Function<Service<HttpRequest, HttpResponse>,
+                                    Service<HttpRequest, HttpResponse>>>
+                                serviceDecoratorFunctions) {
         this.services = requireNonNull(services, "services");
         this.methods = requireNonNull(methods, "methods");
+        this.serviceDecoratorFunctions =
+            requireNonNull(serviceDecoratorFunctions, "serviceDecoratorFunctions");
     }
 
     @Nullable
     ServerMethodDefinition<?, ?> lookupMethod(String methodName) {
         return methods.get(methodName);
+    }
+
+    @Nullable
+    Function<Service<HttpRequest, HttpResponse>, Service<HttpRequest, HttpResponse>>
+            lookupServiceDecoratorFunction(String serviceName) {
+        return serviceDecoratorFunctions.get(serviceName);
     }
 
     List<ServerServiceDefinition> services() {
@@ -85,10 +105,19 @@ final class HandlerRegistry {
     static class Builder {
         // Store per-service first, to make sure services are added/replaced atomically.
         private final HashMap<String, ServerServiceDefinition> services =
-                new HashMap<String, ServerServiceDefinition>();
+                new HashMap<>();
+        private final HashMap<String,
+                Function<Service<HttpRequest, HttpResponse>, Service<HttpRequest, HttpResponse>>>
+                serviceDecoratorFunctions = new HashMap<>();
 
-        Builder addService(ServerServiceDefinition service) {
-            services.put(service.getServiceDescriptor().getName(), service);
+        Builder addService(ServerServiceDefinition service,
+            Function<Service<HttpRequest, HttpResponse>, Service<HttpRequest, HttpResponse>>
+                decoratorFunction) {
+            String serviceName = service.getServiceDescriptor().getName();
+            services.put(serviceName, service);
+            if (decoratorFunction != null) {
+                serviceDecoratorFunctions.put(serviceName, decoratorFunction);
+            }
             return this;
         }
 
@@ -100,7 +129,9 @@ final class HandlerRegistry {
                     mapBuilder.put(method.getMethodDescriptor().getFullMethodName(), method);
                 }
             }
-            return new HandlerRegistry(ImmutableList.copyOf(services.values()), mapBuilder.build());
+            return new HandlerRegistry(ImmutableList.copyOf(services.values()),
+                    mapBuilder.build(),
+                    ImmutableMap.copyOf(serviceDecoratorFunctions));
         }
     }
 }

@@ -19,9 +19,13 @@ package com.linecorp.armeria.server.grpc;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.util.Objects.requireNonNull;
 
+import com.linecorp.armeria.common.AggregatedHttpMessage;
+import com.linecorp.armeria.common.DefaultHttpResponse;
+import com.linecorp.armeria.common.DeferredHttpResponse;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Function;
 
 import javax.annotation.Nullable;
 
@@ -32,6 +36,7 @@ import org.slf4j.LoggerFactory;
 import com.linecorp.armeria.common.HttpHeaderNames;
 import com.linecorp.armeria.common.HttpHeaders;
 import com.linecorp.armeria.common.HttpRequest;
+import com.linecorp.armeria.common.HttpResponse;
 import com.linecorp.armeria.common.HttpResponseWriter;
 import com.linecorp.armeria.common.HttpStatus;
 import com.linecorp.armeria.common.MediaType;
@@ -106,55 +111,84 @@ public final class GrpcService extends AbstractHttpService {
 
     @Override
     protected void doPost(ServiceRequestContext ctx, HttpRequest req, HttpResponseWriter res) throws Exception {
-        String contentType = req.headers().get(HttpHeaderNames.CONTENT_TYPE);
-        SerializationFormat serializationFormat = findSerializationFormat(contentType);
-        if (serializationFormat == null) {
-            res.respond(HttpStatus.UNSUPPORTED_MEDIA_TYPE,
-                        MediaType.PLAIN_TEXT_UTF_8,
-                        "Missing or invalid Content-Type header.");
-            return;
+        String serviceName = GrpcRequestUtil.determineService(ctx);
+        Function<com.linecorp.armeria.server.Service<HttpRequest, HttpResponse>,
+                com.linecorp.armeria.server.Service<HttpRequest, HttpResponse>>
+            decorateFunction = registry.lookupServiceDecoratorFunction(serviceName);
+        DeferredHttpResponse deferredHttpResponse = new DeferredHttpResponse();
+        if (decorateFunction == null) {
+//            res = (HttpResponseWriter) new Service().serve(ctx, req);
+            deferredHttpResponse.delegate(new Service().serve(ctx, req));
+            deferredHttpResponse.close();
+            AggregatedHttpMessage aggregatedHttpMessage = deferredHttpResponse.aggregate().get();
+System.out.println("aggregatedHttpMessage = " + aggregatedHttpMessage);
+//            res.respond(deferredHttpResponse.aggregate().get());
+//            res.respond(new Service().serve(ctx, req).aggregate().get());
+//            new Service().doPost(ctx, req, res);
+//            res.close();
+        } else {
+            res = (DefaultHttpResponse) decorateFunction.apply(new Service()).serve(ctx, req);
+//            decorateFunction.apply(new Service()).
+//            res.close();
+//            res =
         }
+    }
 
-        ctx.logBuilder().serializationFormat(serializationFormat);
-
-        String methodName = GrpcRequestUtil.determineMethod(ctx);
-        if (methodName == null) {
-            res.respond(HttpStatus.BAD_REQUEST,
-                        MediaType.PLAIN_TEXT_UTF_8,
-                        "Invalid path.");
-            return;
-        }
-
-        ServerMethodDefinition<?, ?> method = registry.lookupMethod(methodName);
-        if (method == null) {
-            res.write(
-                    ArmeriaServerCall.statusToTrailers(
-                            Status.UNIMPLEMENTED.withDescription("Method not found: " + methodName),
-                            false));
-            res.close();
-            return;
-        }
-
-        ctx.logBuilder().requestContent(GrpcLogUtil.rpcRequest(method.getMethodDescriptor()), null);
-
-        String timeoutHeader = req.headers().get(GrpcHeaderNames.GRPC_TIMEOUT);
-        if (timeoutHeader != null) {
-            try {
-                long timeout = TimeoutHeaderUtil.fromHeaderValue(timeoutHeader);
-                ctx.setRequestTimeout(Duration.ofNanos(timeout));
-            } catch (IllegalArgumentException e) {
-                res.write(ArmeriaServerCall.statusToTrailers(Status.fromThrowable(e), false));
-                res.close();
+    class Service extends AbstractHttpService {
+        @Override
+        protected void doPost(ServiceRequestContext ctx,
+                              HttpRequest req,
+                              HttpResponseWriter res) throws Exception {
+            String contentType = req.headers().get(HttpHeaderNames.CONTENT_TYPE);
+            SerializationFormat serializationFormat = findSerializationFormat(contentType);
+            if (serializationFormat == null) {
+                res.respond(HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+                    MediaType.PLAIN_TEXT_UTF_8,
+                    "Missing or invalid Content-Type header.");
+                return;
             }
-        }
 
-        ArmeriaServerCall<?, ?> call = startCall(
+            ctx.logBuilder().serializationFormat(serializationFormat);
+
+            String methodName = GrpcRequestUtil.determineMethod(ctx);
+            if (methodName == null) {
+                res.respond(HttpStatus.BAD_REQUEST,
+                    MediaType.PLAIN_TEXT_UTF_8,
+                    "Invalid path.");
+                return;
+            }
+
+            ServerMethodDefinition<?, ?> method = registry.lookupMethod(methodName);
+            if (method == null) {
+                res.write(
+                    ArmeriaServerCall.statusToTrailers(
+                        Status.UNIMPLEMENTED.withDescription("Method not found: " + methodName),
+                        false));
+                res.close();
+                return;
+            }
+
+            ctx.logBuilder().requestContent(GrpcLogUtil.rpcRequest(method.getMethodDescriptor()), null);
+
+            String timeoutHeader = req.headers().get(GrpcHeaderNames.GRPC_TIMEOUT);
+            if (timeoutHeader != null) {
+                try {
+                    long timeout = TimeoutHeaderUtil.fromHeaderValue(timeoutHeader);
+                    ctx.setRequestTimeout(Duration.ofNanos(timeout));
+                } catch (IllegalArgumentException e) {
+                    res.write(ArmeriaServerCall.statusToTrailers(Status.fromThrowable(e), false));
+                    res.close();
+                }
+            }
+
+            ArmeriaServerCall<?, ?> call = startCall(
                 methodName, method, ctx, req.headers(), res, serializationFormat);
-        if (call != null) {
-            ctx.setRequestTimeoutHandler(() -> {
-                call.close(Status.DEADLINE_EXCEEDED, EMPTY_METADATA);
-            });
-            req.subscribe(call.messageReader());
+            if (call != null) {
+                ctx.setRequestTimeoutHandler(() -> {
+                    call.close(Status.DEADLINE_EXCEEDED, EMPTY_METADATA);
+                });
+                req.subscribe(call.messageReader());
+            }
         }
     }
 

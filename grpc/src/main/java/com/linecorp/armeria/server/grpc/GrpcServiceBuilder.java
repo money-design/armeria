@@ -21,6 +21,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import java.util.Set;
+import java.util.function.Function;
 
 import javax.annotation.Nullable;
 
@@ -68,8 +69,10 @@ public final class GrpcServiceBuilder {
      * Adds a GRPC {@link ServerServiceDefinition} to this {@link GrpcServiceBuilder}, such as
      * what's returned by {@link BindableService#bindService()}.
      */
-    public GrpcServiceBuilder addService(ServerServiceDefinition service) {
-        registryBuilder.addService(requireNonNull(service, "service"));
+    public GrpcServiceBuilder addService(ServerServiceDefinition service,
+        Function<Service<HttpRequest, HttpResponse>, Service<HttpRequest, HttpResponse>>
+            decoratorFunction) {
+        registryBuilder.addService(requireNonNull(service, "service"), decoratorFunction);
         return this;
     }
 
@@ -78,7 +81,17 @@ public final class GrpcServiceBuilder {
      * implementations are {@link BindableService}s.
      */
     public GrpcServiceBuilder addService(BindableService bindableService) {
-        return addService(bindableService.bindService());
+        return addService(bindableService.bindService(), null);
+    }
+
+    /**
+     * Adds a GRPC {@link BindableService} to this {@link GrpcServiceBuilder}. Most GRPC service
+     * implementations are {@link BindableService}s.
+     */
+    public GrpcServiceBuilder addService(BindableService bindableService,
+        Function<Service<HttpRequest, HttpResponse>, Service<HttpRequest, HttpResponse>>
+            decoratorFunction) {
+        return addService(bindableService.bindService(), decoratorFunction);
     }
 
     /**

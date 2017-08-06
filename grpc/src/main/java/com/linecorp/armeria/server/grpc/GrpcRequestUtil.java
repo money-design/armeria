@@ -35,5 +35,16 @@ final class GrpcRequestUtil {
         return path.substring(1, path.length());
     }
 
+    @Nullable
+    static String determineService(ServiceRequestContext ctx) {
+        // Remove the leading slash of the path and get the fully qualified service name
+        String path = ctx.mappedPath();
+        int serviceNameEndPosition = path.lastIndexOf('/');
+        if (path.charAt(0) != '/' || serviceNameEndPosition == -1) {
+            return null;
+        }
+        return path.substring(1, serviceNameEndPosition);
+    }
+
     private GrpcRequestUtil() {}
 }
