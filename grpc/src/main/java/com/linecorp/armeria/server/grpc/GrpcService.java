@@ -117,20 +117,11 @@ public final class GrpcService extends AbstractHttpService {
             decorateFunction = registry.lookupServiceDecoratorFunction(serviceName);
         DeferredHttpResponse deferredHttpResponse = new DeferredHttpResponse();
         if (decorateFunction == null) {
-//            res = (HttpResponseWriter) new Service().serve(ctx, req);
-            deferredHttpResponse.delegate(new Service().serve(ctx, req));
-            deferredHttpResponse.close();
-            AggregatedHttpMessage aggregatedHttpMessage = deferredHttpResponse.aggregate().get();
-System.out.println("aggregatedHttpMessage = " + aggregatedHttpMessage);
-//            res.respond(deferredHttpResponse.aggregate().get());
-//            res.respond(new Service().serve(ctx, req).aggregate().get());
-//            new Service().doPost(ctx, req, res);
-//            res.close();
+            // TODO (Rui) This approach lead to unit test failure, need to fix.
+            res.respond(new Service().serve(ctx, req).aggregate().get());
         } else {
-            res = (DefaultHttpResponse) decorateFunction.apply(new Service()).serve(ctx, req);
-//            decorateFunction.apply(new Service()).
-//            res.close();
-//            res =
+            // TODO (Rui) This approach lead to unit test failure, need to fix.
+            res.respond(decorateFunction.apply(new Service()).serve(ctx, req).aggregate().get());
         }
     }
 
